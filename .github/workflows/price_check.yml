@@ -1,0 +1,81 @@
+import os
+import re
+import smtplib
+from email.mime.text import MIMEText
+from email.utils import formataddr
+
+import requests
+from bs4 import BeautifulSoup
+
+# ===== CONFIG =====
+PRODUCT_URL = "https://www.backmarket.co.uk/en-gb/p/iphone-13-128-gb-unlocked/ef5660d2-6883-4b81-b47d-86e5720687ef?l=12&variantClicked=true#scroll=false"
+TARGET_PRICE = 210.0  # GBP
+
+# Email settings from GitHub Secrets
+EMAIL_USER = os.environ["EMAIL_USER"]
+EMAIL_PASS = os.environ["EMAIL_PASS"]
+EMAIL_TO = os.environ.get("EMAIL_TO", EMAIL_USER)
+
+SMTP_SERVER = "smtp.gmail.com"
+SMTP_PORT = 587
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+        "Version/17.0 Mobile/15E148 Safari/604.1"
+    ),
+    "Accept-Language": "en-GB,en;q=0.9",
+}
+# ==================
+
+
+def get_price_from_backmarket(url: str) -> float:
+    resp = requests.get(url, headers=HEADERS, timeout=20)
+    resp.raise_for_status()
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    text = soup.get_text(" ", strip=True)
+
+    match = re.search(r"£\s*([0-9]+(?:\.[0-9]+)?)", text)
+    if not match:
+        raise RuntimeError("Could not find a price on the page.")
+
+    return float(match.group(1))
+
+
+def send_email_notification(current_price: float) -> None:
+    subject = f"iPhone 13 Back Market alert: £{current_price:.2f}"
+    body = (
+        f"The iPhone 13 (128 GB, Midnight) is now £{current_price:.2f}!\n"
+        f"Target was £{TARGET_PRICE:.2f}.\n\n"
+        f"Link: {PRODUCT_URL}"
+    )
+
+    msg = MIMEText(body)
+    msg["Subject"] = subject
+    msg["From"] = formataddr(("BackMarket Price Bot", EMAIL_USER))
+    msg["To"] = EMAIL_TO
+
+    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+        server.starttls()
+        server.login(EMAIL_USER, EMAIL_PASS)
+        server.send_message(msg)
+
+    print("Email sent to", EMAIL_TO)
+
+
+def main():
+    print("Checking price...")
+    price = get_price_from_backmarket(PRODUCT_URL)
+    print("Current price:", price)
+
+    if price < TARGET_PRICE:
+        print("Below target — sending email")
+        send_email_notification(price)
+    else:
+        print("Still above target.")
+
+
+if __name__ == "__main__":
+    main()
